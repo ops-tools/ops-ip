@@ -1,0 +1,277 @@
+#!/bin/bash
+
+##
+# Get IP addresses of a machine
+##
+
+# set -x
+set -e
+
+_arg_private=""
+_arg_public=""
+_arg_link_local=""
+_arg_loopback=""
+_arg_filter=""
+_arg_count=""
+_arg_delimiter=""
+_arg_help=""
+
+_ipv4=()
+_ipv6=()
+
+_filter_ip() {
+  local ip_in+=("${_ipv4[@]}")
+  local ip_in+=("${_ipv6[@]}")
+  local ip_out=()
+  local filter_re="${_arg_filter}"
+  local delimiter=$'\n'
+  local newling_flag=""
+
+  if [[ "${filter_re:0:1}" = '/' ]]; then
+    filter_re="${filter_re:1}"
+    filter_re="${filter_re%\/*}"
+  else
+    filter_re="^${filter_re}"
+    filter_re="${filter_re//\./\\.}"
+    filter_re="${filter_re//\*/.*}"
+  fi
+
+  if [[ "${_arg_delimiter}" ]]; then
+    delimiter="${_arg_delimiter}"
+    newline_flag="-n"
+  fi
+
+  for ip in "${ip_in[@]}"; do
+    if (echo "${ip}" | grep -qP "${filter_re}"); then
+      ip_out+=("${ip}")
+    fi
+  done
+
+  local count
+  if (( _arg_count > 0 )); then
+    count="${_arg_count}"
+  else
+    count="${#ip_out[@]}"
+  fi
+
+  if (( "${#ip_out[@]}" )); then
+    (IFS="${delimiter}"; echo ${newline_flag} "${ip_out[*]:0:${count}}")
+  fi
+}
+
+_parse_ipv6() {
+  local ip_in=($(ip -6 addr | grep -oP '(?<=inet6\s)[\da-f:]+' | sort))
+  local ip_out=()
+  local private_re='(^[fF][cCdD])'
+  local link_local_re='(^[fF][eE][89aAbB][0-9a-fA-F])'
+  local loopback_re='(^::1$)'
+
+  local ip
+  for ip in "${ip_in[@]}"; do
+    if [[ "${_arg_private}" ]]; then
+      if [[ "${ip}" =~ ${private_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_link_local}" ]]; then
+      if [[ "${ip}" =~ ${link_local_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_loopback}" ]]; then
+      if [[ "${ip}" =~ ${loopback_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_public}" ]]; then
+      if [[
+        ! "${ip}" =~ ${private_re} &&
+        ! "${ip}" =~ ${link_local_re} &&
+        ! "${ip}" =~ ${loopback_re}
+      ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[
+      -z "${_arg_private}" &&
+      -z "${_arg_link_local}" &&
+      -z "${_arg_loopback}" &&
+      -z "${_arg_public}"
+    ]]; then
+      ip_out+=("${ip}")
+    fi
+  done
+
+  _ipv6=("${ip_out[@]}")
+}
+
+_parse_ipv4() {
+  local ip_in=($(ip -4 addr | grep -oP '(?<=inet\s)[\d.]+' | sort -V))
+  local ip_out=()
+  local private_re='(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.)'
+  local link_local_re='(^169\.254\.)'
+  local loopback_re='(^127\.)'
+
+  local ip
+  for ip in "${ip_in[@]}"; do
+    if [[ "${_arg_private}" ]]; then
+      if [[ "${ip}" =~ ${private_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_link_local}" ]]; then
+      if [[ "${ip}" =~ ${link_local_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_loopback}" ]]; then
+      if [[ "${ip}" =~ ${loopback_re} ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[ "${_arg_public}" ]]; then
+      if [[
+        ! "${ip}" =~ ${private_re} &&
+        ! "${ip}" =~ ${link_local_re} &&
+        ! "${ip}" =~ ${loopback_re}
+      ]]; then
+        ip_out+=("${ip}")
+      fi
+    fi
+
+    if [[
+      -z "${_arg_private}" &&
+      -z "${_arg_link_local}" &&
+      -z "${_arg_loopback}" &&
+      -z "${_arg_public}"
+    ]]; then
+      ip_out+=("${ip}")
+    fi
+  done
+
+  _ipv4=("${ip_out[@]}")
+}
+
+_print_help() {
+  echo "\
+Get IP addresses of a machine
+
+Usage: $0 [options]
+
+Options:
+  -4, --ipv4        Get IPv4 only
+  -6, --ipv6        Get IPv6 only
+  -p, --private     Get private IPs only
+  -u, --public      Get public IPs only
+  -l, --link-local  Get link-local IPs only
+  -o, --loopback    Get loopback IPs only
+  -f, --filter      Filter IPs list by pattern
+  -c, --count       Count of IPs in list
+  -d, --delimiter   Custom output delimiter
+  -h, --help        Print help and exit\
+  "
+}
+
+_parse_args() {
+  until [[ -z "$@" ]]; do
+    case "$@" in
+      -4*|--ipv4*)
+        _arg_ipv4=true
+        shift
+        ;;
+
+      -6*|--ipv6*)
+        _arg_ipv6=true
+        shift
+        ;;
+
+      -p*|--private*)
+        _arg_private=true
+        shift
+        ;;
+
+      -u*|--public*)
+        _arg_public=true
+        shift
+        ;;
+
+      -l*|--link-local*)
+        _arg_link_local=true
+        shift
+        ;;
+
+      -o*|--loopback*)
+        _arg_loopback=true
+        shift
+        ;;
+
+     -f*|--filter*)
+        if [[ "$2" ]]; then
+          _arg_filter="$2"
+          shift
+        fi
+        shift
+        ;;
+
+      -c*|--count*)
+        if [[ "$2" ]]; then
+          _arg_count="$2"
+          shift
+        fi
+        shift
+        ;;
+
+      -d*|--delimiter*)
+        if [[ "$2" ]]; then
+          _arg_delimiter="$2"
+          shift
+        fi
+        shift
+        ;;
+
+      -h*|--help*)
+        _arg_help=true
+        shift
+        ;;
+
+      *)
+        shift
+        ;;
+    esac
+  done
+}
+
+main() {
+  _parse_args "$@"
+
+  if [[ "${_arg_help}" ]]; then
+    _print_help
+    return 1
+  fi
+
+  if [[ "${_arg_ipv4}" ]]; then
+    _parse_ipv4
+  fi
+
+  if [[ "${_arg_ipv6}" ]]; then
+    _parse_ipv6
+  fi
+
+  if [[ -z "${_arg_ipv4}" && -z "${_arg_ipv6}" ]]; then
+    _parse_ipv4
+    _parse_ipv6
+  fi
+
+  _filter_ip
+}
+
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+  main "$@"
+fi
